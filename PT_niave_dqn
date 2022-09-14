@@ -1,0 +1,123 @@
+import gym
+import numpy as np
+import matplotlib.pyplot as plt
+import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import torch as T
+
+
+import util_learning_plot
+
+class dqn(nn.Module):
+    def __init__(self,  n_actions, input_dims, lr):
+        super(dqn,self).__init__()
+        self.fcl = nn.Linear(*input_dims, 128)
+        self.fcl2 = nn.Linear(128,n_actions)
+
+        
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        self.loss = nn.MSELoss() #nn.CrossEntropyLoss()
+        self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
+        self.to(self.device)
+        
+    def forward(self, state):
+        layer1 = F.relu(self.fcl(state))
+        actions = self.fcl2(layer1)
+        
+        return actions
+
+class Agent():
+    def __init__(self, n_actions, input_dims, eps_start=1.0, eps_end=0.01,
+                 eps_dec=1e-5,lr=0.001,gamma=0.99 ):
+        self.lr = lr
+        self.gamma = gamma
+        self.n_actions = n_actions
+        self.input_dims = input_dims
+        self.epsilon = eps_start
+        self.eps_min = eps_end
+        self.eps_dec = eps_dec
+        self.action_space = [i for i in range(self.n_actions)]
+
+        self.Q = dqn(self.n_actions, self.input_dims, self.lr)
+
+        self.Q()
+
+
+    def choose_action(self, observation):
+        if np.random.random() > self.epsilon:
+            state = T.tensor(observation, dtype=T.float).to(self.Q.device)
+            print("               ")
+            print(state)
+            print("               ")
+            actions = self.Q.forward(state)
+            action = T.argmax(actions).item()
+        else:
+            action = np.random.choice(self.action_space)
+            
+        return action
+
+    def decrement_epsilon(self):
+        self.epsilon = self.epsilon*self.eps_dec if self.epsilon>self.eps_min\
+                       else self.eps_min
+
+
+
+    def learn(self, state, action, reward, state_):
+        self.Q.optimizer.zero_grad()
+        print("               ")
+        print(state)
+        print("               ")
+        states = T.tensor(state, dtype=T.float).to(self.device)
+        actions = T.tensor(action).to(self.Q.device)
+        rewards = T.tensor(reward).to(self.Q.device)
+        states_ = T.tensor(state_, dtype=T.float).to(self.device)
+        print(states)
+        q_pred = self.Q.forward(states[actions])
+        q_next = self.Q.forward(states_).max()
+              
+        q_target = rewards + self.gamma*q_next
+        
+        loss = self.Q.loss(q_target, q_pred).to(self.Q.device)
+        loss.backward()
+        self.Q.optimizer.step()
+        self.decrement_epsilon()
+
+
+        
+if __name__ == '__main__':
+    env = gym.make("CartPole-v1")
+    games = 100000
+    scores = []
+    eps_history = []
+
+
+    agent = Agent(lr = 0.001, input_dims=env.observation_space.shape, n_actions=env.action_space.n)
+
+    for i in range(games):
+        done=False
+        obs = env.reset()
+        #obs = 0
+        score = 0
+        
+        while not done:
+            action = agent.choose_action(obs)
+            obs_,reward,done,trunc,info = env.step(action)
+            score += reward
+            agent.learn(obs, action, reward, obs_)
+            obs = obs_
+        scores.append(score)
+        eps_history.append(agent.epsilon)
+       
+        if i % 100 == 0:
+            average=np.mean(scores[-100:])
+            print('episode ',i,' win pct %.2f' %average, 'epsilon %.2f' %agent.epsilon)
+        
+            if i % 1000 == 0:    
+                print('episode ',i,' win pct %.2f' %average, 'epsilon %.2f' %agent.epsilon)
+
+
+    filename = "cartpole_niavedqn.png"
+    x = [i+1 for i in range(games)]
+    util_learning_plot.plot_learning_curve(x,scores,eps_history,filename)
